@@ -1100,7 +1100,7 @@ select {
 }
 
 .sport-table {
-  min-width: 760px;
+  min-width: 920px;
 }
 
 .country-table {
@@ -1194,6 +1194,19 @@ select {
 .data-table td {
   color: #eef2f8;
   font-size: 14px;
+}
+
+.sport-market-row.is-group-start:not(:first-child) td {
+  border-top: 2px solid rgba(143, 160, 190, 0.28);
+}
+
+.sport-group-cell {
+  vertical-align: middle;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.sport-market-row:hover .sport-group-cell {
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .data-table strong {

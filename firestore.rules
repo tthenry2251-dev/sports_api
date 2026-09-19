@@ -114,6 +114,28 @@ service cloud.firestore {
         && validLeagueProvider();
     }
 
+    function allowedMarketFields() {
+      return [
+        "sportId",
+        "sportName",
+        "marketType",
+        "marketName",
+        "enabled",
+        "alertEnabled",
+        "createdAt",
+        "updatedAt"
+      ];
+    }
+
+    function validMarketFields() {
+      return request.resource.data.sportId is string
+        && request.resource.data.sportName is string
+        && request.resource.data.marketType in ["result", "handicap", "total"]
+        && request.resource.data.marketName is string
+        && request.resource.data.enabled is bool
+        && request.resource.data.alertEnabled is bool;
+    }
+
     function allowedTeamFields() {
       return [
         "sport",
@@ -328,6 +350,28 @@ service cloud.firestore {
         && validLeagueFields();
 
       allow delete: if isAdmin();
+    }
+
+    match /market/{marketId} {
+      allow get, list: if isAdmin();
+
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedMarketFields())
+        && request.resource.data.keys().hasAll(["sportId", "sportName", "marketType", "marketName", "enabled", "alertEnabled"])
+        && validMarketFields();
+
+      allow update: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedMarketFields())
+        && validMarketFields()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "sportName",
+          "marketName",
+          "enabled",
+          "alertEnabled",
+          "updatedAt"
+        ]);
+
+      allow delete: if false;
     }
 
     match /team/{teamId} {

@@ -10,7 +10,7 @@ setGlobalOptions({ region: "asia-northeast3" });
 const db = admin.firestore();
 const providers = ["fonbet", "xbet", "pinnacle"];
 const fonbetListUrl = process.env.FONBET_LIST_URL || "https://line-lb51.bk6bba-resources.com/events/listBase?scopeMarket=1600&lang=en";
-const oddsUpdateSchedule = process.env.ODDS_UPDATE_SCHEDULE || "every 1 minutes";
+const oddsUpdateSchedule = process.env.ODDS_UPDATE_SCHEDULE || "every 10 minutes";
 const oddsDefaultIntervalSeconds = Number(process.env.ODDS_DEFAULT_INTERVAL_SECONDS || 30);
 const oddsMinIntervalSeconds = Number(process.env.ODDS_MIN_INTERVAL_SECONDS || 5);
 const fonbetStandardHandicapPairs = [
@@ -631,6 +631,7 @@ async function updateDueOddsOnce(fonbetPayload = null) {
   }
 
   const leaguesById = await loadLeaguesById();
+  const marketSettingsByKey = await loadMarketSettingsByKey();
   const stateRefs = fonbetGames.map((game) => db.collection("oddsUpdateState").doc(game.id));
   const stateSnapshots = stateRefs.length > 0 ? await db.getAll(...stateRefs) : [];
   const dueItems = [];
@@ -660,7 +661,7 @@ async function updateDueOddsOnce(fonbetPayload = null) {
 
   const payload = fonbetPayload || await fetchFonbetJson();
   const records = createFonbetOddRecords(payload, dueItems.map((item) => item.game), now);
-  const saveResult = await saveOddRecords(records, leaguesById);
+  const saveResult = await saveOddRecords(records, leaguesById, marketSettingsByKey);
   await saveOddsUpdateStates(dueItems, now);
 
   return {
@@ -680,6 +681,34 @@ async function loadLeaguesById() {
   });
 
   return leaguesById;
+}
+
+async function loadMarketSettingsByKey() {
+  const snapshot = await db.collection("market").limit(500).get();
+  const marketSettingsByKey = new Map();
+
+  snapshot.docs.forEach((doc) => {
+    const data = doc.data() || {};
+    const marketType = normalizeOddMarketType(data.marketType, data.marketName);
+    const setting = {
+      id: doc.id,
+      sportId: String(data.sportId || "").trim(),
+      sportName: String(data.sportName || data.sport || "").trim(),
+      marketType,
+      enabled: normalizeEnabled(data.enabled),
+      alertEnabled: normalizeEnabled(data.alertEnabled),
+    };
+
+    if (setting.sportId) {
+      marketSettingsByKey.set(getMarketSettingKey(setting.sportId, marketType), setting);
+    }
+
+    if (setting.sportName) {
+      marketSettingsByKey.set(getMarketSettingKey(setting.sportName, marketType), setting);
+    }
+  });
+
+  return marketSettingsByKey;
 }
 
 async function saveOddsUpdateStates(items, checkedAt) {
@@ -1073,12 +1102,18 @@ function getFonbetFactorLine(factor) {
   return Number.isFinite(rawLine) ? normalizeOddValue(rawLine / 100) : null;
 }
 
-async function saveOddRecords(records, leaguesById = new Map()) {
+async function saveOddRecords(records, leaguesById = new Map(), marketSettingsByKey = new Map()) {
   let savedCount = 0;
   let createdAlertCount = 0;
 
   for (const record of records) {
     if (!isSavableOddRecord(record)) {
+      continue;
+    }
+
+    const marketSetting = getMarketSetting(marketSettingsByKey, record);
+
+    if (marketSetting?.enabled === false) {
       continue;
     }
 
@@ -1118,7 +1153,13 @@ async function saveOddRecords(records, leaguesById = new Map()) {
       updatedAt: now,
     });
 
-    const alert = createOddsChangeAlert(record, latest, leaguesById.get(record.leagueId), changedAt);
+    const alert = createOddsChangeAlert(
+      record,
+      latest,
+      leaguesById.get(record.leagueId),
+      changedAt,
+      marketSetting,
+    );
 
     if (alert) {
       batch.set(db.collection("alert").doc(`alert-${docId}`), {
@@ -1141,8 +1182,25 @@ async function saveOddRecords(records, leaguesById = new Map()) {
   };
 }
 
-function createOddsChangeAlert(record, previousRecord, league, changedAt) {
-  if (!previousRecord || !league?.alertEnabled) {
+function getMarketSetting(marketSettingsByKey, record) {
+  if (!(marketSettingsByKey instanceof Map)) {
+    return null;
+  }
+
+  return marketSettingsByKey.get(getMarketSettingKey(record.sport, record.marketType)) || null;
+}
+
+function getMarketSettingKey(sport, marketType) {
+  return `${normalizeText(sport)}|${normalizeOddMarketType(marketType)}`;
+}
+
+function createOddsChangeAlert(record, previousRecord, league, changedAt, marketSetting = null) {
+  if (
+    !previousRecord
+    || !league?.alertEnabled
+    || marketSetting?.enabled === false
+    || marketSetting?.alertEnabled === false
+  ) {
     return null;
   }
 

@@ -31,6 +31,12 @@ const sidebarItems = [
 
 const sportOptions = ["축구", "농구", "야구", "배구", "아이스하키", "테니스", "e스포츠"];
 
+const marketDefinitions = [
+  { type: "result", label: "승패" },
+  { type: "handicap", label: "핸디캡" },
+  { type: "total", label: "오버언더" },
+];
+
 const oddsProviders = [
   { value: "xbet", label: "1xBet" },
   { value: "fonbet", label: "Pombet" },
@@ -95,6 +101,10 @@ const state = {
   teamBulkSaving: false,
   teamDrafts: {},
   teamError: "",
+  marketLoading: false,
+  marketLoaded: false,
+  marketSaving: false,
+  marketError: "",
   gameLoading: false,
   gameLoaded: false,
   gameImporting: false,
@@ -119,6 +129,7 @@ const state = {
   sports: [],
   countries: [],
   leagues: [],
+  markets: [],
   teams: [],
   games: [],
   odds: [],
@@ -466,6 +477,8 @@ function renderSportsPage() {
     </section>
 
     <section class="page-card sport-list-card">
+      ${state.marketError ? `<p class="inline-notice">${escapeHtml(state.marketError)}</p>` : ""}
+
       <div class="filter-bar sport-filter-bar">
         <select data-sport-enabled-filter aria-label="사용 여부">
           <option value="all" ${selected(state.sportFilters.enabled, "all")}>사용 전체</option>
@@ -501,7 +514,9 @@ function renderSportsPage() {
             <tr>
               <th>순서</th>
               <th>종목명</th>
-              <th>사용여부</th>
+              <th>마켓명</th>
+              <th>사용</th>
+              <th>알림</th>
               <th>수정 및 삭제</th>
             </tr>
           </thead>
@@ -1075,7 +1090,7 @@ function renderSettingsPage() {
   return `
     <section class="summary-grid">
       ${renderMetricCard("서버 자동 수집", settings.oddsUpdaterEnabled ? "ON" : "OFF")}
-      ${renderMetricCard("스케줄", "1분")}
+      ${renderMetricCard("스케줄", "10분")}
       ${renderMetricCard("호출 방식", "1회")}
     </section>
 
@@ -1114,12 +1129,12 @@ function renderMetricCard(label, value) {
 }
 
 function renderSportRows(rows = getFilteredSports().rows) {
-  if (state.sportLoading) {
-    return renderEmptyRow(4, "종목 목록을 불러오는 중입니다.");
+  if (state.sportLoading || (state.marketLoading && !state.marketLoaded)) {
+    return renderEmptyRow(6, "종목 목록을 불러오는 중입니다.");
   }
 
   if (rows.length === 0) {
-    return renderEmptyRow(4, "표시할 종목이 없습니다.");
+    return renderEmptyRow(6, "표시할 종목이 없습니다.");
   }
 
   const orderedSports = getOrderedSports();
@@ -1130,31 +1145,38 @@ function renderSportRows(rows = getFilteredSports().rows) {
       const displayOrder = sportIndex >= 0 ? sportIndex + 1 : sport.sortOrder || "-";
       const disableUp = !canManageMasterData() || state.saving || sportIndex <= 0;
       const disableDown = !canManageMasterData() || state.saving || sportIndex < 0 || sportIndex >= orderedSports.length - 1;
+      const markets = getMarketsForSport(sport);
 
-      return `
-        <tr>
-          <td>
-            <div class="order-controls">
-              <strong>${escapeHtml(displayOrder)}</strong>
-              <button class="order-button" data-move-sport-up="${escapeHtml(sport.id)}" type="button" ${disableUp ? "disabled" : ""} title="위로">위</button>
-              <button class="order-button" data-move-sport-down="${escapeHtml(sport.id)}" type="button" ${disableDown ? "disabled" : ""} title="아래로">아래</button>
-            </div>
-          </td>
-          <td><strong>${escapeHtml(sport.sportName)}</strong></td>
-          <td>${renderToggleSwitch("사용여부", sport.enabled, "data-sport-enabled-toggle", sport.id)}</td>
-          <td>
-            <div class="row-actions">
-              <button class="edit-button" data-edit-sport="${escapeHtml(sport.id)}" type="button" ${canManageMasterData() ? "" : "disabled"} title="수정">
-                <span class="edit-icon"></span>
-                수정
-              </button>
-              <button class="delete-button" data-delete-sport="${escapeHtml(sport.id)}" type="button" ${canManageMasterData() ? "" : "disabled"} title="삭제">
-                삭제
-              </button>
-            </div>
-          </td>
+      return markets.map((market, marketIndex) => `
+        <tr class="sport-market-row ${marketIndex === 0 ? "is-group-start" : ""}">
+          ${marketIndex === 0 ? `
+            <td rowspan="${markets.length}" class="sport-group-cell">
+              <div class="order-controls">
+                <strong>${escapeHtml(displayOrder)}</strong>
+                <button class="order-button" data-move-sport-up="${escapeHtml(sport.id)}" type="button" ${disableUp ? "disabled" : ""} title="위로">위</button>
+                <button class="order-button" data-move-sport-down="${escapeHtml(sport.id)}" type="button" ${disableDown ? "disabled" : ""} title="아래로">아래</button>
+              </div>
+            </td>
+            <td rowspan="${markets.length}" class="sport-group-cell"><strong>${escapeHtml(sport.sportName)}</strong></td>
+          ` : ""}
+          <td><strong>${escapeHtml(market.marketName)}</strong></td>
+          <td>${renderToggleSwitch("사용", market.enabled, "data-market-enabled-toggle", market.id, { disabled: state.marketSaving })}</td>
+          <td>${renderToggleSwitch("알림", market.alertEnabled, "data-market-alert-toggle", market.id, { disabled: state.marketSaving })}</td>
+          ${marketIndex === 0 ? `
+            <td rowspan="${markets.length}" class="sport-group-cell">
+              <div class="row-actions">
+                <button class="edit-button" data-edit-sport="${escapeHtml(sport.id)}" type="button" ${canManageMasterData() ? "" : "disabled"} title="수정">
+                  <span class="edit-icon"></span>
+                  수정
+                </button>
+                <button class="delete-button" data-delete-sport="${escapeHtml(sport.id)}" type="button" ${canManageMasterData() ? "" : "disabled"} title="삭제">
+                  삭제
+                </button>
+              </div>
+            </td>
+          ` : ""}
         </tr>
-      `;
+      `).join("");
     })
     .join("");
 }
@@ -2763,6 +2785,7 @@ function bindAdminEvents() {
   bindMemberRowEvents();
   bindSportRowEvents();
   bindCountryRowEvents();
+  bindMarketRowEvents();
   bindLeagueRowEvents();
   bindTeamRowEvents();
   bindGameRowEvents();
@@ -3024,6 +3047,24 @@ function bindCountryRowEvents() {
       }
 
       handleDeleteCountry(country);
+    });
+  });
+}
+
+function bindMarketRowEvents() {
+  document.querySelectorAll("[data-market-enabled-toggle]").forEach((input) => {
+    input.addEventListener("change", () => {
+      handleUpdateMarketInline(input.dataset.marketEnabledToggle, {
+        enabled: input.checked,
+      });
+    });
+  });
+
+  document.querySelectorAll("[data-market-alert-toggle]").forEach((input) => {
+    input.addEventListener("change", () => {
+      handleUpdateMarketInline(input.dataset.marketAlertToggle, {
+        alertEnabled: input.checked,
+      });
     });
   });
 }
@@ -3967,6 +4008,34 @@ async function handleDeleteLeague(league) {
   }
 }
 
+async function handleUpdateMarketInline(marketId, data) {
+  if (!canManageMasterData()) {
+    state.marketError = "마켓 설정을 변경하려면 로그인이 필요합니다.";
+    render();
+    return;
+  }
+
+  const market = state.markets.find((item) => item.id === marketId);
+
+  if (!market) {
+    return;
+  }
+
+  state.marketSaving = true;
+  state.marketError = "";
+  updateSportsView();
+
+  try {
+    await updateMarketInlineFields(marketId, data);
+    state.message = "마켓 설정이 변경되었습니다.";
+  } catch (error) {
+    state.marketError = toFriendlyError(error);
+  } finally {
+    state.marketSaving = false;
+    render();
+  }
+}
+
 async function handleUpdateLeagueInline(leagueId, data) {
   if (!canManageMasterData()) {
     state.error = "리그 설정을 변경하려면 로그인이 필요합니다.";
@@ -4129,8 +4198,20 @@ async function hydrateActivePage() {
     return;
   }
 
-  if (getActiveHash() === "#/sports" && !state.sportLoading && !state.sportLoaded) {
-    await loadSports();
+  if (
+    getActiveHash() === "#/sports"
+    && !state.sportLoading
+    && !state.marketLoading
+    && (!state.sportLoaded || !state.marketLoaded)
+  ) {
+    if (!state.sportLoaded) {
+      await loadSports();
+    }
+
+    if (state.sportLoaded && !state.marketLoaded) {
+      await loadMarkets();
+    }
+
     render();
     return;
   }
@@ -4247,6 +4328,7 @@ function clearSession() {
   state.sports = [];
   state.countries = [];
   state.leagues = [];
+  state.markets = [];
   state.teams = [];
   state.games = [];
   state.odds = [];
@@ -4260,6 +4342,10 @@ function clearSession() {
   state.teamBulkSaving = false;
   state.teamDrafts = {};
   state.teamError = "";
+  state.marketLoading = false;
+  state.marketLoaded = false;
+  state.marketSaving = false;
+  state.marketError = "";
   state.selectedOddGroupId = "";
   state.selectedAlertId = "";
   state.selectedGameId = "";
@@ -4732,6 +4818,40 @@ async function loadCountries() {
     }
   } finally {
     state.countryLoading = false;
+  }
+}
+
+async function loadMarkets() {
+  if (!state.user || !db) {
+    state.markets = [];
+    state.marketLoaded = false;
+    return;
+  }
+
+  state.marketLoading = true;
+  state.marketError = "";
+
+  try {
+    const snapshot = await db.collection("market").limit(500).get();
+    const storedMarkets = snapshot.docs.map((doc) => normalizeMarket({
+      id: doc.id,
+      persisted: true,
+      ...doc.data(),
+    }));
+
+    state.markets = buildSportMarkets(state.sports, storedMarkets);
+    state.marketLoaded = true;
+  } catch (error) {
+    state.markets = buildSportMarkets(state.sports, []);
+    state.marketLoaded = true;
+
+    if (error?.code?.includes("permission-denied")) {
+      state.marketError = "Firestore 접근 권한이 없습니다. market 테이블 규칙을 배포해주세요.";
+    } else {
+      state.marketError = toFriendlyError(error);
+    }
+  } finally {
+    state.marketLoading = false;
   }
 }
 
@@ -5320,6 +5440,39 @@ async function deleteLeagueRecord(leagueId) {
   }
 
   await db.collection("league").doc(leagueId).delete();
+}
+
+async function updateMarketInlineFields(marketId, data) {
+  if (!marketId || !db) {
+    throw new Error("수정할 마켓을 찾지 못했습니다.");
+  }
+
+  const market = state.markets.find((item) => item.id === marketId);
+
+  if (!market) {
+    throw new Error("수정할 마켓을 찾지 못했습니다.");
+  }
+
+  const payload = {
+    sportId: market.sportId,
+    sportName: market.sportName,
+    marketType: market.marketType,
+    marketName: getMarketName(market.sportName, market.marketType),
+    enabled: hasOwn(data, "enabled") ? normalizeEnabled(data.enabled) : market.enabled,
+    alertEnabled: hasOwn(data, "alertEnabled") ? normalizeEnabled(data.alertEnabled) : market.alertEnabled,
+    updatedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+  };
+
+  if (!market.persisted) {
+    payload.createdAt = window.firebase.firestore.FieldValue.serverTimestamp();
+  }
+
+  await db.collection("market").doc(marketId).set(payload, { merge: true });
+  Object.assign(market, payload, {
+    persisted: true,
+    enabled: payload.enabled,
+    alertEnabled: payload.alertEnabled,
+  });
 }
 
 async function updateLeagueInlineFields(leagueId, data) {
@@ -6378,6 +6531,7 @@ function updateSportsView() {
   }
 
   bindSportRowEvents();
+  bindMarketRowEvents();
 }
 
 function updateCountriesView() {
@@ -7198,6 +7352,75 @@ function formatAlertBadgeCount(count) {
   return count > 99 ? "99+" : String(count);
 }
 
+function getMarketsForSport(sport) {
+  return marketDefinitions.map((definition) => {
+    const market = state.markets.find((item) => (
+      item.sportId === sport.id && item.marketType === definition.type
+    ));
+
+    return market || normalizeMarket({
+      id: createMarketId(sport.id, definition.type),
+      persisted: false,
+      sportId: sport.id,
+      sportName: sport.sportName,
+      marketType: definition.type,
+      marketName: getMarketName(sport.sportName, definition.type),
+      enabled: true,
+      alertEnabled: true,
+    });
+  });
+}
+
+function buildSportMarkets(sports, storedMarkets) {
+  const storedByKey = new Map();
+
+  storedMarkets.forEach((market) => {
+    storedByKey.set(getMarketSettingKey(market.sportId, market.marketType), market);
+    storedByKey.set(getMarketSettingKey(market.sportName, market.marketType), market);
+  });
+
+  return sports.flatMap((sport) => marketDefinitions.map((definition) => {
+    const stored = storedByKey.get(getMarketSettingKey(sport.id, definition.type))
+      || storedByKey.get(getMarketSettingKey(sport.sportName, definition.type));
+
+    return normalizeMarket({
+      id: stored?.id || createMarketId(sport.id, definition.type),
+      persisted: Boolean(stored),
+      sportId: sport.id,
+      sportName: sport.sportName,
+      marketType: definition.type,
+      marketName: getMarketName(sport.sportName, definition.type),
+      enabled: stored?.enabled ?? true,
+      alertEnabled: stored?.alertEnabled ?? true,
+      createdAt: stored?.createdAt,
+      updatedAt: stored?.updatedAt,
+    });
+  }));
+}
+
+function getMarketSettingKey(sport, marketType) {
+  return `${normalizeText(sport)}|${normalizeOddMarketType(marketType)}`;
+}
+
+function createMarketId(sportId, marketType) {
+  return `market-${createHash(getMarketSettingKey(sportId, marketType))}`;
+}
+
+function getMarketName(sport, marketType) {
+  const normalizedType = normalizeOddMarketType(marketType);
+
+  if (normalizedType === "handicap") {
+    return "핸디캡";
+  }
+
+  if (normalizedType === "total") {
+    return "오버언더";
+  }
+
+  const normalizedSport = normalizeText(sport);
+  return ["축구", "football", "soccer"].some((name) => normalizedSport.includes(name)) ? "승무패" : "승패";
+}
+
 function getMemberStats(members) {
   return members.reduce(
     (stats, member) => {
@@ -7271,6 +7494,7 @@ function markActivePageForReload() {
 
   if (activeHash === "#/sports") {
     state.sportLoaded = false;
+    state.marketLoaded = false;
   } else if (activeHash === "#/countries") {
     state.countryLoaded = false;
   } else if (activeHash === "#/leagues") {
@@ -7393,6 +7617,24 @@ function normalizeCountry(raw) {
     sortOrder: normalizeSortOrder(raw.sortOrder ?? raw.order ?? raw["순서"], 0),
     enabled: normalizeEnabled(raw.enabled ?? raw.isEnabled ?? raw["사용여부"] ?? raw["사용"]),
     createdAtText: formatDate(raw.createdAt),
+  };
+}
+
+function normalizeMarket(raw) {
+  const sportName = String(raw.sportName || raw.sport || raw["종목"] || "").trim();
+  const sportId = normalizeSportId(raw.sportId || sportName);
+  const marketType = normalizeOddMarketType(raw.marketType, raw.marketName);
+
+  return {
+    ...raw,
+    id: String(raw.id || createMarketId(sportId, marketType)),
+    sportId,
+    sportName,
+    marketType,
+    marketName: getMarketName(sportName, marketType),
+    enabled: normalizeEnabled(raw.enabled),
+    alertEnabled: normalizeEnabled(raw.alertEnabled),
+    persisted: Boolean(raw.persisted),
   };
 }
 
