@@ -1461,19 +1461,7 @@ function formatAlertOddValue(alert, value, field) {
   }, field);
 }
 
-function isPrimaryHandicapLineAlert(alert) {
-  return normalizeOddMarketType(alert.marketType, alert.marketName) === "handicap"
-    && Array.isArray(alert.changedFields)
-    && alert.changedFields.includes("betDraw");
-}
-
 function formatAlertChangeDetails(alert) {
-  if (isPrimaryHandicapLineAlert(alert)) {
-    const previousLine = getAlertOddValue(alert, "previous", "betDraw");
-    const currentLine = getAlertOddValue(alert, "current", "betDraw");
-    return `정배 기준점 ${formatAlertOddValue(alert, previousLine, "betDraw")} → ${formatAlertOddValue(alert, currentLine, "betDraw")}`;
-  }
-
   const labels = getOddMarketColumnLabels(alert);
   const fieldLabels = {
     betHome: labels.home,
@@ -1997,15 +1985,12 @@ function getOddMarketTitle(record = {}) {
     return record.marketName || "승패";
   }
 
-  const primaryLineAlert = isPrimaryHandicapLineAlert(record);
-  const lineValue = primaryLineAlert
-    ? normalizeOddValue(record.currentBetDraw)
-    : normalizeOddValue(record.lineValue ?? record.betDraw);
+  const lineValue = normalizeOddValue(record.lineValue ?? record.betDraw);
   const formattedLine = marketType === "handicap" && lineValue > 0
     ? `+${formatOddValue(lineValue)}`
     : formatOddValue(lineValue);
 
-  return `${record.marketName} · ${primaryLineAlert ? "정배 기준" : "기준"} ${formattedLine}`;
+  return `${record.marketName} · 기준 ${formattedLine}`;
 }
 
 function compareGameOddGroups(left, right) {
