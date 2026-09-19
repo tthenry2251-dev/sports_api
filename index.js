@@ -16,6 +16,7 @@ const firebaseConfig = {
 const requiredConfigKeys = ["apiKey", "authDomain", "projectId", "appId"];
 const sessionKey = "sportsApiAdminSession";
 const sidebarOrderKey = "sportsApiSidebarOrderV2";
+const alertSoundEnabledKey = "sportsApiAlertSoundEnabled";
 
 const sidebarItems = [
   { hash: "#/alerts", icon: "bell", label: "알림" },
@@ -134,6 +135,7 @@ const state = {
   games: [],
   odds: [],
   alerts: [],
+  alertSoundEnabled: loadAlertSoundEnabled(),
   settings: {
     oddsUpdaterEnabled: true,
   },
@@ -192,6 +194,9 @@ const state = {
     page: 1,
   },
   alertFilters: {
+    sport: "all",
+    league: "all",
+    market: "all",
     status: "all",
     query: "",
     pageSize: 30,
@@ -385,6 +390,12 @@ function renderAdminShell() {
             <span class="hamburger"></span>
           </button>
           <div class="topbar-spacer"></div>
+          <label class="switch-control topbar-alert-toggle" title="알림음 ${state.alertSoundEnabled ? "끄기" : "켜기"}">
+            <strong>알림</strong>
+            <input data-alert-sound-toggle type="checkbox" ${state.alertSoundEnabled ? "checked" : ""} aria-label="알림음 사용" />
+            <span aria-hidden="true"></span>
+            <em>${state.alertSoundEnabled ? "ON" : "OFF"}</em>
+          </label>
           <button
             class="icon-button topbar-alert-button ${unreadAlertCount > 0 ? "has-alerts" : ""}"
             data-open-alerts
@@ -1021,6 +1032,13 @@ function renderOddSortHeader(label, field) {
 
 function renderAlertsPage() {
   const stats = getAlertStats(state.alerts);
+  const sports = getAlertSportOptions();
+  const leagues = getAlertLeagueOptions(state.alertFilters.sport);
+
+  if (state.alertFilters.league !== "all" && !leagues.includes(state.alertFilters.league)) {
+    state.alertFilters.league = "all";
+  }
+
   const result = getFilteredAlerts();
 
   return `
@@ -1034,6 +1052,23 @@ function renderAlertsPage() {
       ${state.alertError ? `<p class="inline-notice alert-error-notice">${escapeHtml(state.alertError)}</p>` : ""}
 
       <div class="filter-bar alert-filter-bar">
+        <select data-alert-sport-filter aria-label="종목">
+          <option value="all" ${selected(state.alertFilters.sport, "all")}>종목 전체</option>
+          ${sports.map((sport) => `<option value="${escapeHtml(sport)}" ${selected(state.alertFilters.sport, sport)}>${escapeHtml(sport)}</option>`).join("")}
+        </select>
+
+        <select data-alert-league-filter aria-label="리그">
+          <option value="all" ${selected(state.alertFilters.league, "all")}>리그 전체</option>
+          ${leagues.map((league) => `<option value="${escapeHtml(league)}" ${selected(state.alertFilters.league, league)}>${escapeHtml(league)}</option>`).join("")}
+        </select>
+
+        <select data-alert-market-filter aria-label="마켓">
+          <option value="all" ${selected(state.alertFilters.market, "all")}>마켓 전체</option>
+          <option value="result" ${selected(state.alertFilters.market, "result")}>승무패 / 승패</option>
+          <option value="handicap" ${selected(state.alertFilters.market, "handicap")}>핸디캡</option>
+          <option value="total" ${selected(state.alertFilters.market, "total")}>오버언더</option>
+        </select>
+
         <select data-alert-status-filter aria-label="알림 상태">
           <option value="all" ${selected(state.alertFilters.status, "all")}>상태 전체</option>
           <option value="unread" ${selected(state.alertFilters.status, "unread")}>미확인</option>
@@ -1042,7 +1077,7 @@ function renderAlertsPage() {
 
         <label class="search-box">
           <span class="search-icon"></span>
-          <input data-alert-search-input value="${escapeHtml(state.alertFilters.query)}" placeholder="종목, 리그, 마켓, 팀명 검색" />
+          <input data-alert-search-input value="${escapeHtml(state.alertFilters.query)}" placeholder="리그명 또는 팀명 검색" />
         </label>
       </div>
 
@@ -2384,6 +2419,10 @@ function bindLoginEvents() {
 function bindAdminEvents() {
   bindSidebarOrderEvents();
 
+  document.querySelector("[data-alert-sound-toggle]")?.addEventListener("change", (event) => {
+    handleAlertSoundToggle(event.currentTarget.checked);
+  });
+
   document.querySelector("[data-open-alerts]")?.addEventListener("click", () => {
     unlockAlertAudio();
     window.location.hash = "#/alerts";
@@ -2743,6 +2782,30 @@ function bindAdminEvents() {
       state.oddFilters.page = 1;
       render();
     });
+  });
+
+  document.querySelector("[data-alert-sport-filter]")?.addEventListener("change", (event) => {
+    state.alertFilters.sport = event.currentTarget.value;
+    const leagues = getAlertLeagueOptions(state.alertFilters.sport);
+
+    if (state.alertFilters.league !== "all" && !leagues.includes(state.alertFilters.league)) {
+      state.alertFilters.league = "all";
+    }
+
+    state.alertFilters.page = 1;
+    render();
+  });
+
+  document.querySelector("[data-alert-league-filter]")?.addEventListener("change", (event) => {
+    state.alertFilters.league = event.currentTarget.value;
+    state.alertFilters.page = 1;
+    updateAlertsView();
+  });
+
+  document.querySelector("[data-alert-market-filter]")?.addEventListener("change", (event) => {
+    state.alertFilters.market = event.currentTarget.value;
+    state.alertFilters.page = 1;
+    updateAlertsView();
   });
 
   document.querySelector("[data-alert-status-filter]")?.addEventListener("change", (event) => {
@@ -4463,7 +4526,41 @@ function stopTeamListener() {
   teamUnsubscribe = null;
 }
 
+function handleAlertSoundToggle(enabled) {
+  state.alertSoundEnabled = Boolean(enabled);
+  saveAlertSoundEnabled(state.alertSoundEnabled);
+
+  if (state.alertSoundEnabled) {
+    unlockAlertAudio();
+  } else {
+    stopAlertSound();
+  }
+
+  pushToast("success", `알림음을 ${state.alertSoundEnabled ? "켰습니다" : "껐습니다"}.`);
+  render();
+}
+
+function loadAlertSoundEnabled() {
+  try {
+    return window.localStorage.getItem(alertSoundEnabledKey) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+function saveAlertSoundEnabled(enabled) {
+  try {
+    window.localStorage.setItem(alertSoundEnabledKey, enabled ? "true" : "false");
+  } catch {
+    // Keep the current-page setting when browser storage is unavailable.
+  }
+}
+
 function unlockAlertAudio() {
+  if (!state.alertSoundEnabled) {
+    return;
+  }
+
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
 
   if (!AudioContextClass) {
@@ -4482,7 +4579,7 @@ function unlockAlertAudio() {
 }
 
 function syncAlertSound() {
-  if (!state.user || getUnreadAlertCount() === 0) {
+  if (!state.alertSoundEnabled || !state.user || getUnreadAlertCount() === 0) {
     stopAlertSound();
     return;
   }
@@ -4503,7 +4600,12 @@ function stopAlertSound() {
 }
 
 function playAlertTone() {
-  if (!alertAudioContext || alertAudioContext.state !== "running" || getUnreadAlertCount() === 0) {
+  if (
+    !state.alertSoundEnabled
+    || !alertAudioContext
+    || alertAudioContext.state !== "running"
+    || getUnreadAlertCount() === 0
+  ) {
     return;
   }
 
@@ -7023,24 +7125,26 @@ function getFilteredAlerts() {
   const filters = state.alertFilters;
   const query = normalizeText(filters.query);
   const filtered = state.alerts.filter((alert) => {
+    const sportMatches = filters.sport === "all" || alert.sport === filters.sport;
+    const leagueMatches = filters.league === "all" || alert.leagueName === filters.league;
+    const marketMatches = filters.market === "all"
+      || normalizeOddMarketType(alert.marketType, alert.marketName) === filters.market;
     const statusMatches = filters.status === "all"
       || (filters.status === "unread" && !alert.acknowledged)
       || (filters.status === "acknowledged" && alert.acknowledged);
     const queryTarget = normalizeText([
-      formatDate(alert.changedAt),
-      formatGameTime(alert.gameTime),
-      alert.sport,
-      alert.country,
       alert.leagueName,
-      alert.marketName,
       alert.homeTeam,
       alert.awayTeam,
       getTeamDisplayName(alert.homeTeam, alert.leagueId, alert.leagueName),
       getTeamDisplayName(alert.awayTeam, alert.leagueId, alert.leagueName),
-      getProviderLabel(alert.provider),
     ].join(" "));
 
-    return statusMatches && (!query || queryTarget.includes(query));
+    return sportMatches
+      && leagueMatches
+      && marketMatches
+      && statusMatches
+      && (!query || queryTarget.includes(query));
   });
 
   filtered.sort(compareAlerts);
@@ -8076,6 +8180,21 @@ function getOddLeagueOptions(sport = "all") {
   return [...new Set(state.odds
     .filter((odd) => sport === "all" || odd.sport === sport)
     .map((odd) => odd.leagueName)
+    .filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right, "ko-KR"));
+}
+
+function getAlertSportOptions() {
+  return [...new Set([
+    ...getOrderedSports().map((sport) => sport.sportName).filter(Boolean),
+    ...state.alerts.map((alert) => alert.sport).filter(Boolean),
+  ])].sort((left, right) => left.localeCompare(right, "ko-KR"));
+}
+
+function getAlertLeagueOptions(sport = "all") {
+  return [...new Set(state.alerts
+    .filter((alert) => sport === "all" || alert.sport === sport)
+    .map((alert) => alert.leagueName)
     .filter(Boolean))]
     .sort((left, right) => left.localeCompare(right, "ko-KR"));
 }
