@@ -872,6 +872,8 @@ function createFonbetOddRecords(data, games, changedAt = new Date()) {
       handicapLines
         .sort((left, right) => left.lineValue - right.lineValue)
         .forEach((line) => {
+          const favoriteSide = getFonbetFavoriteSide(line, resultHome, resultAway);
+
           records.push(createFonbetOddRecord(game, {
             marketType: "handicap",
             marketName: "핸디캡",
@@ -880,6 +882,9 @@ function createFonbetOddRecords(data, games, changedAt = new Date()) {
             betDraw: line.lineValue,
             betAway: line.betAway,
             lineValue: line.lineValue,
+            isPrimaryLine: line.primary,
+            favoriteSide,
+            favoriteLineValue: getFavoriteHandicapLineValue(line.lineValue, favoriteSide),
             changedAt,
           }));
         });
@@ -907,6 +912,9 @@ function createFonbetOddRecord(game, market) {
       betDraw: market.betDraw,
       betAway: market.betAway,
       lineValue: market.lineValue ?? null,
+      isPrimaryLine: Boolean(market.isPrimaryLine),
+      favoriteSide: market.favoriteSide || "",
+      favoriteLineValue: market.favoriteLineValue ?? null,
       baseOdds: normalizeOddsThreshold(game.oddsThreshold),
       sourceKey: `odd|${game.id}|fonbet-${market.marketKeySuffix}`,
       changedAt: market.changedAt,
@@ -929,6 +937,40 @@ function getFonbetSportFactorProfile(sport) {
 
 function isVolleyballSport(sport) {
   return ["배구", "volleyball"].includes(normalizeText(sport));
+}
+
+function getFonbetFavoriteSide(line, resultHome, resultAway) {
+  const lineValue = normalizeOddValue(line?.lineValue);
+
+  if (lineValue !== null && Math.abs(lineValue) > 0.001) {
+    return lineValue < 0 ? "home" : "away";
+  }
+
+  const homeOdds = normalizeOddValue(resultHome);
+  const awayOdds = normalizeOddValue(resultAway);
+
+  if (homeOdds !== null && awayOdds !== null && Math.abs(homeOdds - awayOdds) > 0.001) {
+    return homeOdds < awayOdds ? "home" : "away";
+  }
+
+  const handicapHome = normalizeOddValue(line?.betHome);
+  const handicapAway = normalizeOddValue(line?.betAway);
+
+  if (handicapHome !== null && handicapAway !== null && Math.abs(handicapHome - handicapAway) > 0.001) {
+    return handicapHome < handicapAway ? "home" : "away";
+  }
+
+  return "";
+}
+
+function getFavoriteHandicapLineValue(homeLineValue, favoriteSide) {
+  const lineValue = normalizeOddValue(homeLineValue);
+
+  if (lineValue === null || !["home", "away"].includes(favoriteSide)) {
+    return null;
+  }
+
+  return favoriteSide === "away" ? normalizeOddValue(-lineValue) : lineValue;
 }
 
 function getFonbetMarketLines(factors, pairs, marketType) {
@@ -1076,6 +1118,14 @@ function getFonbetFactorLine(factor) {
 async function saveOddRecords(records, leaguesById = new Map()) {
   let savedCount = 0;
   let createdAlertCount = 0;
+  const primaryLineUpdates = await loadPrimaryHandicapLineUpdates(records);
+
+  primaryLineUpdates.forEach((update) => {
+    update.alert = update.changed
+      ? createPrimaryHandicapLineAlert(update, leaguesById.get(update.record.leagueId))
+      : null;
+  });
+  const primaryLineAlertKeys = new Set(primaryLineUpdates.filter((update) => update.alert).map((update) => update.record.marketKey));
 
   for (const record of records) {
     if (!isSavableOddRecord(record)) {
@@ -1118,7 +1168,9 @@ async function saveOddRecords(records, leaguesById = new Map()) {
       updatedAt: now,
     });
 
-    const alert = createOddsChangeAlert(record, latest, leaguesById.get(record.leagueId), changedAt);
+    const alert = primaryLineAlertKeys.has(record.marketKey)
+      ? null
+      : createOddsChangeAlert(record, latest, leaguesById.get(record.leagueId), changedAt);
 
     if (alert) {
       batch.set(db.collection("alert").doc(`alert-${docId}`), {
@@ -1135,10 +1187,193 @@ async function saveOddRecords(records, leaguesById = new Map()) {
     savedCount += 1;
   }
 
+  const primaryLineResult = await savePrimaryHandicapLineUpdates(primaryLineUpdates);
+  createdAlertCount += primaryLineResult.createdAlerts;
+
   return {
     savedOdds: savedCount,
     createdAlerts: createdAlertCount,
   };
+}
+
+async function loadPrimaryHandicapLineUpdates(records) {
+  const candidates = new Map();
+
+  records.forEach((record) => {
+    const marketType = normalizeOddMarketType(record.marketType, record.marketName);
+    const favoriteLineValue = normalizeOddValue(record.favoriteLineValue);
+
+    if (
+      !record.isPrimaryLine
+      || marketType !== "handicap"
+      || !record.gameId
+      || !["home", "away"].includes(record.favoriteSide)
+      || favoriteLineValue === null
+    ) {
+      return;
+    }
+
+    const stateId = `primary-line-${createHash(`${record.gameId}|${record.provider}|handicap`)}`;
+    candidates.set(stateId, {
+      stateId,
+      stateRef: db.collection("oddsPrimaryLineState").doc(stateId),
+      record,
+    });
+  });
+
+  const pendingUpdates = [...candidates.values()];
+
+  if (pendingUpdates.length === 0) {
+    return [];
+  }
+
+  const snapshots = await db.getAll(...pendingUpdates.map((update) => update.stateRef));
+
+  return pendingUpdates.map((update, index) => {
+    const previous = snapshots[index]?.exists ? snapshots[index].data() : null;
+    return {
+      ...update,
+      previous,
+      changed: hasPrimaryHandicapLineChanged(previous, update.record),
+      alert: null,
+    };
+  });
+}
+
+function hasPrimaryHandicapLineChanged(previous, record) {
+  if (!previous) {
+    return false;
+  }
+
+  const previousFavoriteLine = normalizeOddValue(previous.favoriteLineValue);
+  const currentFavoriteLine = normalizeOddValue(record.favoriteLineValue);
+  const previousFavoriteSide = String(previous.favoriteSide || "");
+
+  if (previousFavoriteLine === null || currentFavoriteLine === null || !["home", "away"].includes(previousFavoriteSide)) {
+    return false;
+  }
+
+  return previousFavoriteSide !== record.favoriteSide
+    || Math.abs(previousFavoriteLine - currentFavoriteLine) > 0.001;
+}
+
+function createPrimaryHandicapLineAlert(update, league) {
+  if (!update.previous || !league?.alertEnabled) {
+    return null;
+  }
+
+  const { previous, record } = update;
+  const previousBetHome = normalizeOddValue(previous.betHome);
+  const previousLineValue = normalizeOddValue(previous.lineValue);
+  const previousBetAway = normalizeOddValue(previous.betAway);
+  const currentLineValue = normalizeOddValue(record.lineValue);
+  const previousFavoriteLine = normalizeOddValue(previous.favoriteLineValue);
+  const currentFavoriteLine = normalizeOddValue(record.favoriteLineValue);
+
+  if (
+    previousBetHome === null
+    || previousLineValue === null
+    || previousBetAway === null
+    || currentLineValue === null
+    || previousFavoriteLine === null
+    || currentFavoriteLine === null
+  ) {
+    return null;
+  }
+
+  const changedAt = normalizeGameTime(record.changedAt) || new Date();
+  const favoriteSideChanged = String(previous.favoriteSide || "") !== record.favoriteSide;
+  const alertPreviousLine = favoriteSideChanged ? previousLineValue : previousFavoriteLine;
+  const alertCurrentLine = favoriteSideChanged ? currentLineValue : currentFavoriteLine;
+
+  return {
+    type: "odds-change",
+    gameId: record.gameId,
+    gameTime: admin.firestore.Timestamp.fromDate(record.gameTime),
+    sport: record.sport,
+    country: record.country,
+    leagueId: record.leagueId,
+    leagueName: record.leagueName || league.leagueName,
+    provider: record.provider,
+    marketType: "handicap",
+    marketName: record.marketName,
+    marketKey: record.marketKey,
+    homeTeam: record.homeTeam,
+    awayTeam: record.awayTeam,
+    previousBetHome,
+    previousBetDraw: alertPreviousLine,
+    previousBetAway,
+    currentBetHome: record.betHome,
+    currentBetDraw: alertCurrentLine,
+    currentBetAway: record.betAway,
+    lineValue: currentLineValue,
+    changedFields: ["betDraw"],
+    maxDifference: Math.round(Math.abs(alertCurrentLine - alertPreviousLine) * 100) / 100,
+    threshold: normalizeOddsThreshold(league.oddsThreshold),
+    intervalSeconds: normalizeIntervalSeconds(league.intervalSeconds),
+    changedAt: admin.firestore.Timestamp.fromDate(changedAt),
+  };
+}
+
+async function savePrimaryHandicapLineUpdates(updates) {
+  let createdAlertCount = 0;
+
+  for (let offset = 0; offset < updates.length; offset += 200) {
+    const chunk = updates.slice(offset, offset + 200);
+    const batch = db.batch();
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    chunk.forEach((update) => {
+      const { record } = update;
+      const changedAt = normalizeGameTime(record.changedAt) || new Date();
+
+      batch.set(update.stateRef, {
+        gameId: record.gameId,
+        leagueId: record.leagueId,
+        provider: record.provider,
+        marketType: "handicap",
+        marketName: record.marketName,
+        marketKey: record.marketKey,
+        homeTeam: record.homeTeam,
+        awayTeam: record.awayTeam,
+        favoriteSide: record.favoriteSide,
+        favoriteLineValue: record.favoriteLineValue,
+        lineValue: record.lineValue,
+        betHome: record.betHome,
+        betAway: record.betAway,
+        changedAt: admin.firestore.Timestamp.fromDate(changedAt),
+        updatedAt: now,
+      }, { merge: true });
+
+      if (!update.alert) {
+        return;
+      }
+
+      const alertId = `alert-primary-line-${createHash([
+        record.gameId,
+        record.provider,
+        update.previous?.favoriteSide,
+        update.previous?.favoriteLineValue,
+        record.favoriteSide,
+        record.favoriteLineValue,
+        changedAt.toISOString(),
+      ].join("|"))}`;
+
+      batch.set(db.collection("alert").doc(alertId), {
+        ...update.alert,
+        acknowledged: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+      createdAlertCount += 1;
+    });
+
+    if (chunk.length > 0) {
+      await batch.commit();
+    }
+  }
+
+  return { createdAlerts: createdAlertCount };
 }
 
 function createOddsChangeAlert(record, previousRecord, league, changedAt) {
