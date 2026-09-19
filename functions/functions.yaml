@@ -1,0 +1,96 @@
+{
+  "endpoints": {
+    "loginAdmin": {
+      "availableMemoryMb": 256,
+      "timeoutSeconds": 30,
+      "minInstances": null,
+      "maxInstances": null,
+      "ingressSettings": null,
+      "concurrency": null,
+      "serviceAccountEmail": null,
+      "vpc": null,
+      "platform": "gcfv2",
+      "region": [
+        "asia-northeast3"
+      ],
+      "labels": {},
+      "httpsTrigger": {
+        "invoker": [
+          "public"
+        ]
+      },
+      "entryPoint": "loginAdmin"
+    },
+    "importGames": {
+      "availableMemoryMb": 512,
+      "timeoutSeconds": 300,
+      "minInstances": null,
+      "maxInstances": null,
+      "ingressSettings": null,
+      "concurrency": null,
+      "serviceAccountEmail": null,
+      "vpc": null,
+      "platform": "gcfv2",
+      "region": [
+        "asia-northeast3"
+      ],
+      "labels": {},
+      "httpsTrigger": {
+        "invoker": [
+          "public"
+        ]
+      },
+      "entryPoint": "importGames"
+    },
+    "updateSettings": {
+      "availableMemoryMb": 256,
+      "timeoutSeconds": 60,
+      "minInstances": null,
+      "maxInstances": null,
+      "ingressSettings": null,
+      "concurrency": null,
+      "serviceAccountEmail": null,
+      "vpc": null,
+      "platform": "gcfv2",
+      "region": [
+        "asia-northeast3"
+      ],
+      "labels": {},
+      "httpsTrigger": {
+        "invoker": [
+          "public"
+        ]
+      },
+      "entryPoint": "updateSettings"
+    },
+    "updateOdds": {
+      "availableMemoryMb": 512,
+      "timeoutSeconds": 300,
+      "minInstances": null,
+      "maxInstances": null,
+      "ingressSettings": null,
+      "concurrency": null,
+      "serviceAccountEmail": null,
+      "vpc": null,
+      "platform": "gcfv2",
+      "region": [
+        "asia-northeast3"
+      ],
+      "labels": {},
+      "scheduleTrigger": {
+        "schedule": "every 1 minutes",
+        "retryConfig": {},
+        "timeZone": "Asia/Seoul"
+      },
+      "entryPoint": "updateOdds"
+    }
+  },
+  "specVersion": "v1alpha1",
+  "requiredAPIs": [
+    {
+      "api": "cloudscheduler.googleapis.com",
+      "reason": "Needed for scheduled functions."
+    }
+  ],
+  "extensions": {}
+}

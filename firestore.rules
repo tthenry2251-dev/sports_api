@@ -1,0 +1,417 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.admin == true
+        && request.auth.token.loginId is string
+        && exists(/databases/$(database)/documents/user/$(request.auth.token.loginId))
+        && get(/databases/$(database)/documents/user/$(request.auth.token.loginId)).data.status == "active";
+    }
+
+    function allowedUserFields() {
+      return [
+        "loginId",
+        "nickname",
+        "status",
+        "passwordHash",
+        "passwordSalt",
+        "createdAt",
+        "updatedAt",
+        "level",
+        "role"
+      ];
+    }
+
+    function validUserStatus() {
+      return request.resource.data.status in ["active", "inactive"];
+    }
+
+    function hasPasswordHash() {
+      return request.resource.data.passwordHash is string
+        && request.resource.data.passwordSalt is string;
+    }
+
+    function validPasswordUpdate() {
+      let changedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      return hasPasswordHash()
+        && (!changedKeys.hasAny(["passwordHash", "passwordSalt"])
+          || changedKeys.hasAll(["passwordHash", "passwordSalt"]));
+    }
+
+    function allowedSportFields() {
+      return [
+        "sportName",
+        "sortOrder",
+        "enabled",
+        "createdAt",
+        "updatedAt"
+      ];
+    }
+
+    function validSportFields() {
+      return request.resource.data.sportName is string
+        && request.resource.data.sortOrder is number
+        && request.resource.data.enabled is bool;
+    }
+
+    function allowedCountryFields() {
+      return [
+        "countryName",
+        "sortOrder",
+        "enabled",
+        "createdAt",
+        "updatedAt"
+      ];
+    }
+
+    function validCountryFields() {
+      return request.resource.data.countryName is string
+        && request.resource.data.sortOrder is number
+        && request.resource.data.enabled is bool;
+    }
+
+    function allowedLeagueFields() {
+      return [
+        "sport",
+        "countryId",
+        "country",
+        "leagueName",
+        "provider",
+        "tournament",
+        "oddsThreshold",
+        "intervalSeconds",
+        "enabled",
+        "alertEnabled",
+        "fonbetLeagueName",
+        "fonbetLeagueId",
+        "fonbetLeagueUrl",
+        "xbetLeagueName",
+        "xbetLeagueId",
+        "xbetLeagueUrl",
+        "pinnacleLeagueName",
+        "pinnacleLeagueId",
+        "pinnacleLeagueUrl",
+        "createdAt",
+        "updatedAt"
+      ];
+    }
+
+    function validLeagueProvider() {
+      return request.resource.data.provider in ["fonbet", "xbet", "pinnacle"];
+    }
+
+    function validLeagueFields() {
+      return request.resource.data.sport is string
+        && request.resource.data.countryId is string
+        && request.resource.data.country is string
+        && request.resource.data.leagueName is string
+        && request.resource.data.enabled is bool
+        && request.resource.data.alertEnabled is bool
+        && request.resource.data.oddsThreshold is number
+        && request.resource.data.intervalSeconds is number
+        && validLeagueProvider();
+    }
+
+    function allowedTeamFields() {
+      return [
+        "sport",
+        "countryId",
+        "country",
+        "leagueId",
+        "leagueName",
+        "provider",
+        "sourceName",
+        "displayName",
+        "createdAt",
+        "updatedAt"
+      ];
+    }
+
+    function validTeamFields() {
+      return request.resource.data.sport is string
+        && request.resource.data.countryId is string
+        && request.resource.data.country is string
+        && request.resource.data.leagueId is string
+        && request.resource.data.leagueName is string
+        && request.resource.data.sourceName is string
+        && request.resource.data.displayName is string
+        && validLeagueProvider();
+    }
+
+    function allowedGameFields() {
+      return [
+        "gameTime",
+        "sport",
+        "countryId",
+        "country",
+        "leagueId",
+        "leagueName",
+        "provider",
+        "homeTeam",
+        "awayTeam",
+        "status",
+        "oddsThreshold",
+        "intervalSeconds",
+        "enabled",
+        "sourceUrl",
+        "sourceKey",
+        "createdAt",
+        "updatedAt",
+        "seenAt"
+      ];
+    }
+
+    function validGameFields() {
+      return request.resource.data.gameTime is timestamp
+        && request.resource.data.sport is string
+        && request.resource.data.countryId is string
+        && request.resource.data.country is string
+        && request.resource.data.leagueId is string
+        && request.resource.data.leagueName is string
+        && request.resource.data.homeTeam is string
+        && request.resource.data.awayTeam is string
+        && (!request.resource.data.keys().hasAny(["status"]) || request.resource.data.status in ["scheduled", "finished"])
+        && request.resource.data.enabled is bool
+        && request.resource.data.sourceUrl is string
+        && request.resource.data.sourceKey is string
+        && (!request.resource.data.keys().hasAny(["oddsThreshold"]) || request.resource.data.oddsThreshold is number)
+        && (!request.resource.data.keys().hasAny(["intervalSeconds"]) || request.resource.data.intervalSeconds is number)
+        && validLeagueProvider();
+    }
+
+    function allowedOddFields() {
+      return [
+        "gameId",
+        "gameTime",
+        "sport",
+        "country",
+        "leagueId",
+        "leagueName",
+        "provider",
+        "marketType",
+        "marketName",
+        "marketKey",
+        "homeTeam",
+        "awayTeam",
+        "betHome",
+        "betDraw",
+        "betAway",
+        "lineValue",
+        "baseOdds",
+        "sourceKey",
+        "changedAt",
+        "createdAt",
+        "updatedAt"
+      ];
+    }
+
+    function validOddFields() {
+      return request.resource.data.gameTime is timestamp
+        && request.resource.data.sport is string
+        && request.resource.data.marketName is string
+        && (!request.resource.data.keys().hasAny(["marketType"]) || request.resource.data.marketType in ["result", "total", "handicap"])
+        && request.resource.data.homeTeam is string
+        && request.resource.data.awayTeam is string
+        && request.resource.data.betHome is number
+        && request.resource.data.betDraw is number
+        && request.resource.data.betAway is number
+        && (!request.resource.data.keys().hasAny(["lineValue"]) || request.resource.data.lineValue is number)
+        && request.resource.data.baseOdds is number
+        && request.resource.data.changedAt is timestamp;
+    }
+
+    function allowedAlertFields() {
+      return [
+        "type",
+        "gameId",
+        "gameTime",
+        "sport",
+        "country",
+        "leagueId",
+        "leagueName",
+        "provider",
+        "marketType",
+        "marketName",
+        "marketKey",
+        "homeTeam",
+        "awayTeam",
+        "previousBetHome",
+        "previousBetDraw",
+        "previousBetAway",
+        "currentBetHome",
+        "currentBetDraw",
+        "currentBetAway",
+        "lineValue",
+        "changedFields",
+        "maxDifference",
+        "threshold",
+        "intervalSeconds",
+        "acknowledged",
+        "acknowledgedAt",
+        "acknowledgedBy",
+        "changedAt",
+        "createdAt",
+        "updatedAt"
+      ];
+    }
+
+    function validAlertFields() {
+      return request.resource.data.type == "odds-change"
+        && request.resource.data.gameTime is timestamp
+        && request.resource.data.sport is string
+        && request.resource.data.leagueName is string
+        && request.resource.data.marketType in ["result", "total", "handicap"]
+        && request.resource.data.marketName is string
+        && request.resource.data.homeTeam is string
+        && request.resource.data.awayTeam is string
+        && request.resource.data.previousBetHome is number
+        && request.resource.data.previousBetDraw is number
+        && request.resource.data.previousBetAway is number
+        && request.resource.data.currentBetHome is number
+        && request.resource.data.currentBetDraw is number
+        && request.resource.data.currentBetAway is number
+        && request.resource.data.changedFields is list
+        && request.resource.data.maxDifference is number
+        && request.resource.data.threshold is number
+        && request.resource.data.intervalSeconds is number
+        && request.resource.data.acknowledged is bool
+        && request.resource.data.changedAt is timestamp;
+    }
+
+    match /user/{loginId} {
+      allow get, list: if isAdmin();
+
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedUserFields())
+        && request.resource.data.keys().hasAll(["loginId", "nickname", "status", "passwordHash", "passwordSalt"])
+        && request.resource.data.loginId == loginId
+        && validUserStatus()
+        && hasPasswordHash();
+
+      allow update: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedUserFields())
+        && request.resource.data.loginId == resource.data.loginId
+        && validPasswordUpdate()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["nickname", "status", "passwordHash", "passwordSalt", "updatedAt", "level", "role"])
+        && validUserStatus();
+
+      allow delete: if false;
+    }
+
+    match /sport/{sportId} {
+      allow get, list: if isAdmin();
+
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedSportFields())
+        && request.resource.data.keys().hasAll(["sportName", "sortOrder", "enabled"])
+        && validSportFields();
+
+      allow update: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedSportFields())
+        && validSportFields();
+
+      allow delete: if isAdmin();
+    }
+
+    match /league/{leagueId} {
+      allow get, list: if isAdmin();
+
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedLeagueFields())
+        && request.resource.data.keys().hasAll(["sport", "countryId", "country", "leagueName", "provider", "oddsThreshold", "intervalSeconds", "enabled", "alertEnabled"])
+        && validLeagueFields();
+
+      allow update: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedLeagueFields())
+        && validLeagueFields();
+
+      allow delete: if isAdmin();
+    }
+
+    match /team/{teamId} {
+      allow get, list: if isAdmin();
+
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedTeamFields())
+        && request.resource.data.keys().hasAll(["sport", "countryId", "country", "leagueId", "leagueName", "provider", "sourceName", "displayName"])
+        && validTeamFields();
+
+      allow update: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedTeamFields())
+        && validTeamFields()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["displayName", "updatedAt"]);
+
+      allow delete: if false;
+    }
+
+    match /game/{gameId} {
+      allow get, list: if isAdmin();
+
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedGameFields())
+        && request.resource.data.keys().hasAll(["gameTime", "sport", "countryId", "country", "leagueId", "leagueName", "provider", "homeTeam", "awayTeam", "status", "enabled", "sourceUrl", "sourceKey"])
+        && validGameFields();
+
+      allow update: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedGameFields())
+        && validGameFields();
+
+      allow delete: if isAdmin();
+    }
+
+    match /odd/{oddId} {
+      allow get, list: if isAdmin();
+
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedOddFields())
+        && request.resource.data.keys().hasAll(["gameTime", "sport", "marketName", "homeTeam", "awayTeam", "betHome", "betDraw", "betAway", "baseOdds", "changedAt"])
+        && validOddFields();
+
+      allow update: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedOddFields())
+        && validOddFields();
+
+      allow delete: if isAdmin();
+    }
+
+    match /alert/{alertId} {
+      allow get, list: if isAdmin();
+      allow create, delete: if false;
+
+      allow update: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedAlertFields())
+        && validAlertFields()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "acknowledged",
+          "acknowledgedAt",
+          "acknowledgedBy",
+          "updatedAt"
+        ])
+        && request.resource.data.acknowledged == true
+        && request.resource.data.acknowledgedAt is timestamp
+        && request.resource.data.acknowledgedBy is string;
+    }
+
+    match /country/{countryId} {
+      allow get, list: if isAdmin();
+
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedCountryFields())
+        && request.resource.data.keys().hasAll(["countryName", "sortOrder", "enabled"])
+        && validCountryFields();
+
+      allow update: if isAdmin()
+        && request.resource.data.keys().hasOnly(allowedCountryFields())
+        && validCountryFields();
+
+      allow delete: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow get, list: if isAdmin();
+      allow create, update, delete: if false;
+    }
+  }
+}
