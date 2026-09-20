@@ -11,7 +11,7 @@ const db = admin.firestore();
 const providers = ["fonbet", "xbet", "pinnacle"];
 const fonbetListUrl = process.env.FONBET_LIST_URL || "https://line-lb51.bk6bba-resources.com/events/listBase?scopeMarket=1600&lang=en";
 const oddsUpdateSchedule = process.env.ODDS_UPDATE_SCHEDULE || "every 10 minutes";
-const gameImportSchedule = process.env.GAME_IMPORT_SCHEDULE || "every 6 hours";
+const gameImportSchedule = process.env.GAME_IMPORT_SCHEDULE || "every 2 hours";
 const fonbetStandardHandicapPairs = [
   { home: 927, away: 928, primary: true },
   { home: 910, away: 912 },

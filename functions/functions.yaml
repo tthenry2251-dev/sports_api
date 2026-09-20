@@ -57,7 +57,7 @@
       ],
       "labels": {},
       "scheduleTrigger": {
-        "schedule": "every 6 hours",
+        "schedule": "every 2 hours",
         "retryConfig": {},
         "timeZone": "Asia/Seoul"
       },
