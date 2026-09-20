@@ -42,6 +42,27 @@
       },
       "entryPoint": "importGames"
     },
+    "syncGames": {
+      "availableMemoryMb": 512,
+      "timeoutSeconds": 300,
+      "minInstances": null,
+      "maxInstances": null,
+      "ingressSettings": null,
+      "concurrency": null,
+      "serviceAccountEmail": null,
+      "vpc": null,
+      "platform": "gcfv2",
+      "region": [
+        "asia-northeast3"
+      ],
+      "labels": {},
+      "scheduleTrigger": {
+        "schedule": "every 6 hours",
+        "retryConfig": {},
+        "timeZone": "Asia/Seoul"
+      },
+      "entryPoint": "syncGames"
+    },
     "updateSettings": {
       "availableMemoryMb": 256,
       "timeoutSeconds": 60,
@@ -78,7 +99,7 @@
       ],
       "labels": {},
       "scheduleTrigger": {
-        "schedule": "every 1 minutes",
+        "schedule": "every 10 minutes",
         "retryConfig": {},
         "timeZone": "Asia/Seoul"
       },

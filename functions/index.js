@@ -11,8 +11,7 @@ const db = admin.firestore();
 const providers = ["fonbet", "xbet", "pinnacle"];
 const fonbetListUrl = process.env.FONBET_LIST_URL || "https://line-lb51.bk6bba-resources.com/events/listBase?scopeMarket=1600&lang=en";
 const oddsUpdateSchedule = process.env.ODDS_UPDATE_SCHEDULE || "every 10 minutes";
-const oddsDefaultIntervalSeconds = Number(process.env.ODDS_DEFAULT_INTERVAL_SECONDS || 30);
-const oddsMinIntervalSeconds = Number(process.env.ODDS_MIN_INTERVAL_SECONDS || 5);
+const gameImportSchedule = process.env.GAME_IMPORT_SCHEDULE || "every 6 hours";
 const fonbetStandardHandicapPairs = [
   { home: 927, away: 928, primary: true },
   { home: 910, away: 912 },
@@ -285,6 +284,33 @@ exports.updateSettings = onRequest(
   },
 );
 
+exports.syncGames = onSchedule(
+  {
+    schedule: gameImportSchedule,
+    timeZone: "Asia/Seoul",
+    timeoutSeconds: 300,
+    memory: "512MiB",
+  },
+  async () => {
+    const updaterEnabled = await isOddsUpdaterEnabled();
+
+    if (!updaterEnabled) {
+      console.log("Game importer skipped: disabled in settings.");
+      return;
+    }
+
+    const result = await importEnabledLeagueGames();
+
+    console.log("Scheduled game import complete", {
+      checkedLeagues: result.checkedLeagues,
+      parsedGames: result.parsedGames,
+      savedGames: result.savedGames,
+      failedLeagues: result.failedLeagues.length,
+      skippedLeagues: result.skippedLeagues.length,
+    });
+  },
+);
+
 exports.updateOdds = onSchedule(
   {
     schedule: oddsUpdateSchedule,
@@ -309,15 +335,9 @@ exports.updateOdds = onSchedule(
     }
 
     try {
-      const importResult = await importEnabledLeagueGames();
-      const result = await runScheduledOddsUpdater(importResult.fonbetPayload);
+      const result = await runScheduledOddsUpdater();
 
-      console.log("Sports data updater complete", {
-        checkedLeagues: importResult.checkedLeagues,
-        parsedGames: importResult.parsedGames,
-        savedGames: importResult.savedGames,
-        failedLeagues: importResult.failedLeagues.length,
-        skippedLeagues: importResult.skippedLeagues.length,
+      console.log("Odds updater complete", {
         ...result,
         ...statusResult,
       });
@@ -387,8 +407,8 @@ async function importEnabledLeagueGames({ leagueId = "" } = {}) {
   };
 }
 
-async function runScheduledOddsUpdater(fonbetPayload = null) {
-  const tick = await updateDueOddsOnce(fonbetPayload);
+async function runScheduledOddsUpdater() {
+  const tick = await updateDueOddsOnce();
 
   return {
     ticks: 1,
@@ -582,8 +602,13 @@ async function isOddsUpdaterEnabled() {
 }
 
 async function synchronizeGameStatuses() {
-  const snapshot = await db.collection("game").limit(500).get();
   const now = new Date();
+  const snapshot = await db.collection("game")
+    .where("status", "==", "scheduled")
+    .where("gameTime", "<=", admin.firestore.Timestamp.fromDate(now))
+    .orderBy("gameTime", "asc")
+    .limit(500)
+    .get();
   const batch = db.batch();
   let updatedGames = 0;
 
@@ -613,44 +638,26 @@ async function synchronizeGameStatuses() {
   };
 }
 
-async function updateDueOddsOnce(fonbetPayload = null) {
+async function updateDueOddsOnce() {
   const now = new Date();
-  const gameSnapshot = await db.collection("game").where("enabled", "==", true).limit(500).get();
-  const games = gameSnapshot.docs.map((doc) => normalizeGame({ id: doc.id, ...doc.data() }));
-  const fonbetGames = games.filter((game) => (
-    normalizeOddsProvider(game.provider) === "fonbet" && game.status === "scheduled"
-  ));
+  const gameSnapshot = await db.collection("game")
+    .where("enabled", "==", true)
+    .where("provider", "==", "fonbet")
+    .where("status", "==", "scheduled")
+    .where("gameTime", ">", admin.firestore.Timestamp.fromDate(now))
+    .orderBy("gameTime", "asc")
+    .limit(500)
+    .get();
+  const fonbetGames = gameSnapshot.docs
+    .map((doc) => normalizeGame({ id: doc.id, ...doc.data() }))
+    .filter((game) => (
+      game.enabled
+      && normalizeOddsProvider(game.provider) === "fonbet"
+      && game.status === "scheduled"
+      && getDateValue(game.gameTime) > now.getTime()
+    ));
 
   if (fonbetGames.length === 0) {
-    return {
-      dueGames: 0,
-      savedOdds: 0,
-      createdAlerts: 0,
-      skippedGames: games.length,
-    };
-  }
-
-  const leaguesById = await loadLeaguesById();
-  const marketSettingsByKey = await loadMarketSettingsByKey();
-  const stateRefs = fonbetGames.map((game) => db.collection("oddsUpdateState").doc(game.id));
-  const stateSnapshots = stateRefs.length > 0 ? await db.getAll(...stateRefs) : [];
-  const dueItems = [];
-
-  fonbetGames.forEach((game, index) => {
-    const intervalSeconds = getGameUpdateIntervalSeconds(game, leaguesById);
-    const checkedAt = stateSnapshots[index]?.data()?.checkedAt;
-    const lastCheckedAt = typeof checkedAt?.toMillis === "function" ? checkedAt.toMillis() : 0;
-
-    if (now.getTime() - lastCheckedAt >= intervalSeconds * 1000) {
-      dueItems.push({
-        game,
-        intervalSeconds,
-        stateRef: stateRefs[index],
-      });
-    }
-  });
-
-  if (dueItems.length === 0) {
     return {
       dueGames: 0,
       savedOdds: 0,
@@ -659,16 +666,17 @@ async function updateDueOddsOnce(fonbetPayload = null) {
     };
   }
 
-  const payload = fonbetPayload || await fetchFonbetJson();
-  const records = createFonbetOddRecords(payload, dueItems.map((item) => item.game), now);
+  const leaguesById = await loadLeaguesById();
+  const marketSettingsByKey = await loadMarketSettingsByKey();
+  const payload = await fetchFonbetJson();
+  const records = createFonbetOddRecords(payload, fonbetGames, now);
   const saveResult = await saveOddRecords(records, leaguesById, marketSettingsByKey);
-  await saveOddsUpdateStates(dueItems, now);
 
   return {
-    dueGames: dueItems.length,
+    dueGames: fonbetGames.length,
     savedOdds: saveResult.savedOdds,
     createdAlerts: saveResult.createdAlerts,
-    skippedGames: fonbetGames.length - dueItems.length,
+    skippedGames: 0,
   };
 }
 
@@ -709,26 +717,6 @@ async function loadMarketSettingsByKey() {
   });
 
   return marketSettingsByKey;
-}
-
-async function saveOddsUpdateStates(items, checkedAt) {
-  const batch = db.batch();
-  const now = admin.firestore.FieldValue.serverTimestamp();
-
-  items.forEach((item) => {
-    batch.set(
-      item.stateRef,
-      {
-        gameId: item.game.id,
-        checkedAt: admin.firestore.Timestamp.fromDate(checkedAt),
-        intervalSeconds: item.intervalSeconds,
-        updatedAt: now,
-      },
-      { merge: true },
-    );
-  });
-
-  await batch.commit();
 }
 
 async function acquireOddsUpdateLock() {
@@ -1966,18 +1954,6 @@ function compareOddRecords(left, right) {
   }
 
   return String(right.id || "").localeCompare(String(left.id || ""));
-}
-
-function getGameUpdateIntervalSeconds(game, leaguesById) {
-  const gameIntervalSeconds = normalizeIntervalSeconds(game.intervalSeconds);
-  const leagueIntervalSeconds = normalizeIntervalSeconds(leaguesById.get(game.leagueId)?.intervalSeconds);
-  const intervalSeconds = gameIntervalSeconds > 0 ? gameIntervalSeconds : leagueIntervalSeconds;
-
-  if (intervalSeconds <= 0) {
-    return oddsDefaultIntervalSeconds;
-  }
-
-  return Math.max(oddsMinIntervalSeconds, intervalSeconds);
 }
 
 function getLeagueProviderUrl(league) {
